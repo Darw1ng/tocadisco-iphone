@@ -1,0 +1,129 @@
+# Compila la app de iPhone en una Mac de GitHub (una app de iPhone solo se puede compilar en macOS).
+#
+# Siempre:   compila y deja un .ipa SIN FIRMAR en «Artifacts» (sirve para Sideloadly/AltStore).
+# Si están los secretos de Apple (ver README): firma la app y la sube a TestFlight.
+name: iPhone
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      app_url:
+        description: "Dirección que abre la app (vacío = https://www.tocadisco.com.mx/app)"
+        required: false
+        default: ""
+      testflight:
+        description: "Firmar y subir a TestFlight (necesita los secretos de Apple)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_URL: ${{ inputs.app_url != '' && inputs.app_url || 'https://www.tocadisco.com.mx/app' }}
+  BUILD_NUMBER: ${{ github.run_number }}
+
+jobs:
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash  # con «bash» explícito, GitHub usa -eo pipefail
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Usar el Xcode más reciente
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)
+          echo "Usando $XCODE"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+
+      - name: Generar el proyecto de Xcode
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Compilar sin firmar
+        run: |
+          xcodebuild build \
+            -project TocaDisco.xcodeproj -scheme TocaDisco -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            APP_URL="$APP_URL" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | xcbeautify
+          mkdir -p Payload
+          cp -R "build/Build/Products/Release-iphoneos/Toca Disco.app" Payload/
+          zip -qry TocaDisco-sin-firmar.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TocaDisco-sin-firmar-${{ github.run_number }}
+          path: TocaDisco-sin-firmar.ipa
+
+      - name: ¿Están los secretos de Apple?
+        id: apple
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+          KEY: ${{ secrets.ASC_KEY_P8 }}
+          WANTED: ${{ github.event_name != 'workflow_dispatch' || inputs.testflight }}
+        run: |
+          if [ -n "$TEAM" ] && [ -n "$KEY_ID" ] && [ -n "$ISSUER" ] && [ -n "$KEY" ] && [ "$WANTED" = "true" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Sin los secretos APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID y ASC_KEY_P8 solo se compila sin firmar. Ver README."
+          fi
+
+      - name: Firmar y subir a TestFlight
+        if: steps.apple.outputs.ok == 'true'
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+          KEY: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          KEY_PATH="$RUNNER_TEMP/AuthKey_$KEY_ID.p8"
+          printf '%s' "$KEY" > "$KEY_PATH"
+          AUTH=(-allowProvisioningUpdates
+                -authenticationKeyPath "$KEY_PATH"
+                -authenticationKeyID "$KEY_ID"
+                -authenticationKeyIssuerID "$ISSUER")
+
+          xcodebuild archive \
+            -project TocaDisco.xcodeproj -scheme TocaDisco -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/TocaDisco.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic \
+            APP_URL="$APP_URL" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            "${AUTH[@]}" | xcbeautify
+
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/TocaDisco.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            "${AUTH[@]}"
+
+          rm -f "$KEY_PATH"
+          echo "::notice::Listo: la compilación $BUILD_NUMBER se subió a App Store Connect. Aparece en TestFlight en 5 a 30 minutos."

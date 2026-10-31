@@ -1,0 +1,34 @@
+# Proyecto de Xcode descrito en texto. GitHub Actions lo convierte en TocaDisco.xcodeproj con
+# XcodeGen (brew install xcodegen && xcodegen); en una Mac se hace igual antes de abrirlo.
+name: TocaDisco
+options:
+  bundleIdPrefix: mx.tocadisco
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+
+targets:
+  TocaDisco:
+    type: application
+    platform: iOS
+    sources:
+      - path: TocaDisco
+    settings:
+      base:
+        PRODUCT_NAME: Toca Disco
+        PRODUCT_BUNDLE_IDENTIFIER: mx.tocadisco.movil
+        INFOPLIST_FILE: TocaDisco/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Solo iPhone: así App Store no pide capturas de iPad.
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        # La dirección que abre la app. Se cambia aquí o con APP_URL=... al compilar.
+        APP_URL: https://www.tocadisco.com.mx/app
+        ENABLE_BITCODE: NO
