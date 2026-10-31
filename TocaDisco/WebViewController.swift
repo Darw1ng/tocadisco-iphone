@@ -45,6 +45,8 @@ final class WebViewController: UIViewController {
     private var area = Area.other
     private let monitor = NWPathMonitor()
     private var downloads: [WKDownload: URL] = [:]
+    private var urlWatch: NSKeyValueObservation?
+    private var lastBounce = Date.distantPast
 
     private enum Area { case login, privateArea, other }
 
@@ -117,6 +119,14 @@ final class WebViewController: UIViewController {
             web.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         webView = web
+
+        // Next cambia de página sin navegar: decidePolicyFor no se entera, pero la dirección sí cambia.
+        urlWatch = web.observe(\.url) { [weak self] web, _ in
+            guard let url = web.url else { return }
+            DispatchQueue.main.async {
+                if self?.isSales(url) == true { self?.backToApp() }
+            }
+        }
     }
 
     /// Las dos franjas fuera de la zona segura (arriba la barra de estado, abajo la barra de inicio).
@@ -221,6 +231,13 @@ final class WebViewController: UIViewController {
         webView.load(URLRequest(url: url))
     }
 
+    /// Regresa de una página de venta a la app. Si /app rebotara a una de ellas, no da vueltas sin fin.
+    private func backToApp() {
+        let bouncing = Date().timeIntervalSince(lastBounce) < 3
+        lastBounce = Date()
+        if !bouncing { load(Self.appURL) }
+    }
+
     func persistState() {
         // WKWebView ya guarda las cookies en disco; aquí solo los colores de las orillas.
         defaults.set(barTop.hexString, forKey: "bar_top")
@@ -319,10 +336,18 @@ final class WebViewController: UIViewController {
         return (scheme == "https" || scheme == "http") && bareHost(url.host) == bareHost(Self.appURL.host)
     }
 
-    /// El pago de la suscripción (Stripe) se queda dentro de la app para que regrese con la sesión abierta.
+    /// El pago de la suscripción (Stripe) no se abre ni aquí ni en Safari: en iPhone el plan no se
+    /// vende ni se cobra (regla 3.1.1 de Apple).
     private func isPayment(_ url: URL) -> Bool {
         guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased() else { return false }
         return host == "stripe.com" || host.hasSuffix(".stripe.com")
+    }
+
+    /// Las páginas que venden el plan: el inicio y /contratar. En iPhone no se muestran.
+    private func isSales(_ url: URL) -> Bool {
+        guard isOurs(url) else { return false }
+        let path = url.path
+        return path.isEmpty || path == "/" || path == "/contratar" || path.hasPrefix("/contratar/")
     }
 
     private func openOutside(_ url: URL) {
@@ -364,7 +389,13 @@ extension WebViewController: WKNavigationDelegate {
 
         switch url.scheme?.lowercased() {
         case "http", "https":
-            if isOurs(url) || isPayment(url) {
+            if isPayment(url) {
+                decisionHandler(.cancel)
+                toast("Esto no está disponible en la app.")
+            } else if isSales(url) {
+                decisionHandler(.cancel)
+                backToApp()
+            } else if isOurs(url) {
                 // Con «atrás» no se regresa al formulario de entrada con la sesión ya abierta,
                 // ni al panel después de cerrarla (en Android se borra el historial).
                 if action.navigationType == .backForward {
@@ -457,7 +488,13 @@ extension WebViewController: WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = action.request.url {
-            if isOurs(url) || isPayment(url) { webView.load(action.request) } else { openOutside(url) }
+            if isPayment(url) {
+                toast("Esto no está disponible en la app.")
+            } else if isOurs(url) {
+                webView.load(action.request)
+            } else {
+                openOutside(url)
+            }
         }
         return nil
     }

@@ -22,8 +22,10 @@ Lo mismo que la de Android, adaptado a iPhone:
 - **Arranque.** El logo sobre negro hasta que la primera página ya se pintó.
 - **Sin conexión.** Pantalla propia con «Reintentar»; se reintenta sola cuando vuelve el internet.
   Si el servidor responde 5xx, «Toca Disco no responde».
-- **Enlaces.** Lo de tocadisco.com.mx (con o sin www) y Stripe se quedan adentro; lo demás sale
-  a Safari, Mail, Teléfono o WhatsApp.
+- **Enlaces.** Lo de tocadisco.com.mx (con o sin www) se queda adentro; lo demás sale a Safari,
+  Mail, Teléfono o WhatsApp.
+- **Sin venta.** El inicio y `/contratar` regresan a `/app`, y Stripe no se abre ni adentro ni en
+  Safari: en iPhone el plan no se vende ni se cobra (regla 3.1.1 de Apple).
 - **Atrás.** Deslizar desde la orilla izquierda. No regresa al formulario de entrada con la sesión
   ya abierta ni al panel después de cerrarla.
 - **Fotos.** Los campos de archivo abren la cámara o la fototeca de iOS.
